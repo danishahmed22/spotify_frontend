@@ -6,7 +6,9 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'audio_manager.dart';
 
 class SearchLibraryScreen extends StatefulWidget {
-  const SearchLibraryScreen({super.key});
+  final String? initialCategory;
+  const SearchLibraryScreen({super.key, this.initialCategory});
+
   @override
   State<SearchLibraryScreen> createState() => _SearchLibraryScreenState();
 }
@@ -21,6 +23,17 @@ class _SearchLibraryScreenState extends State<SearchLibraryScreen> {
   String? filterQuery;
   String? selectedCategory;
   String? selectedArtist;
+  bool isLoading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    selectedCategory = widget.initialCategory;
+    _loadAll().then((_) {
+      _searchSongs();
+      setState(() => isLoading = false);
+    });
+  }
 
   Future<String?> _getToken() async {
     final prefs = await SharedPreferences.getInstance();
@@ -31,21 +44,43 @@ class _SearchLibraryScreenState extends State<SearchLibraryScreen> {
     final token = await _getToken();
     final headers = {'Authorization': 'Bearer $token'};
 
-    // Categories
-    final catRes = await http.get(Uri.parse("http://127.0.0.1:8000/songs/categories"), headers: headers);
-    if (catRes.statusCode == 200) categories = List<String>.from(json.decode(catRes.body));
+    // Load categories if not viewing a specific category
+    if (widget.initialCategory == null) {
+      final catRes = await http.get(
+        Uri.parse("http://127.0.0.1:8000/songs/categories"),
+        headers: headers,
+      );
+      if (catRes.statusCode == 200) {
+        categories = List<String>.from(json.decode(catRes.body));
+      }
+    }
 
-    // Artists
-    final artRes = await http.get(Uri.parse("http://127.0.0.1:8000/user/artists"), headers: headers);
-    if (artRes.statusCode == 200) artists = List<String>.from(json.decode(artRes.body));
+    // Load artists
+    final artRes = await http.get(
+      Uri.parse("http://127.0.0.1:8000/user/artists"),
+      headers: headers,
+    );
+    if (artRes.statusCode == 200) {
+      artists = List<String>.from(json.decode(artRes.body));
+    }
 
-    // Albums
-    final albRes = await http.get(Uri.parse("http://127.0.0.1:8000/user/albums"), headers: headers);
-    if (albRes.statusCode == 200) albums = List<String>.from(json.decode(albRes.body));
+    // Load albums
+    final albRes = await http.get(
+      Uri.parse("http://127.0.0.1:8000/user/albums"),
+      headers: headers,
+    );
+    if (albRes.statusCode == 200) {
+      albums = List<String>.from(json.decode(albRes.body));
+    }
 
-    // Uploads
-    final upRes = await http.get(Uri.parse("http://127.0.0.1:8000/user/uploads"), headers: headers);
-    if (upRes.statusCode == 200) uploads = json.decode(upRes.body);
+    // Load uploads
+    final upRes = await http.get(
+      Uri.parse("http://127.0.0.1:8000/user/uploads"),
+      headers: headers,
+    );
+    if (upRes.statusCode == 200) {
+      uploads = json.decode(upRes.body);
+    }
 
     setState(() {});
   }
@@ -64,87 +99,179 @@ class _SearchLibraryScreenState extends State<SearchLibraryScreen> {
     }
   }
 
-  @override
-  void initState() {
-    super.initState();
-    _loadAll();
+  Widget _buildSongTile(Map<String, dynamic> song) {
+    return ListTile(
+      leading: const Icon(Icons.music_note, color: Colors.deepPurple),
+      title: Text(
+        song['title'],
+        style: const TextStyle(fontWeight: FontWeight.w500),
+      ),
+      subtitle: Text(
+        song['artist'] ?? 'Unknown Artist',
+        style: TextStyle(color: Colors.grey.shade400),
+      ),
+      trailing: IconButton(
+        icon: const Icon(Icons.play_arrow, color: Colors.deepPurple),
+        onPressed: () => AudioManager.play(context, song),
+      ),
+      contentPadding: const EdgeInsets.symmetric(horizontal: 16),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(8),
+      ),
+    );
   }
 
-  Widget songTile(Map<String, dynamic> song) {
-    return ListTile(
-      title: Text(song['title']),
-      subtitle: Text(song['artist']),
-      trailing: const Icon(Icons.play_arrow),
-      onTap: () => AudioManager.play(context, song),
+  Widget _buildCategoryChips() {
+    return Wrap(
+      spacing: 8,
+      runSpacing: 8,
+      children: categories.map((cat) => ChoiceChip(
+        label: Text(cat),
+        selected: selectedCategory == cat,
+        selectedColor: Colors.deepPurple.withOpacity(0.2),
+        labelStyle: TextStyle(
+          color: selectedCategory == cat
+              ? Colors.deepPurple
+              : Colors.white,
+        ),
+        onSelected: (selected) {
+          setState(() => selectedCategory = selected ? cat : null);
+          _searchSongs();
+        },
+      )).toList(),
+    );
+  }
+
+  Widget _buildSectionTitle(String title) {
+    return Padding(
+      padding: const EdgeInsets.only(top: 20, bottom: 8),
+      child: Text(
+        title,
+        style: const TextStyle(
+          fontSize: 18,
+          fontWeight: FontWeight.bold,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildArtistChips() {
+    return Wrap(
+      spacing: 8,
+      runSpacing: 8,
+      children: artists.map((artist) => Chip(
+        label: Text(artist),
+        backgroundColor: Colors.grey.shade800,
+        labelStyle: const TextStyle(color: Colors.white),
+      )).toList(),
+    );
+  }
+
+  Widget _buildAlbumChips() {
+    return Wrap(
+      spacing: 8,
+      runSpacing: 8,
+      children: albums.map((album) => Chip(
+        label: Text(album),
+        backgroundColor: Colors.grey.shade800,
+        labelStyle: const TextStyle(color: Colors.white),
+      )).toList(),
     );
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text("Search & Library")),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.all(20),
+      backgroundColor: Colors.black,
+      appBar: AppBar(
+        title: Text(
+          widget.initialCategory != null
+              ? "${widget.initialCategory} Songs"
+              : "Browse Music",
+          style: const TextStyle(fontWeight: FontWeight.bold),
+        ),
+        backgroundColor: Colors.black,
+        elevation: 0,
+      ),
+      body: isLoading
+          ? const Center(child: CircularProgressIndicator())
+          : SingleChildScrollView(
+        padding: const EdgeInsets.all(16),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // 🔍 Search
-            TextField(
-              decoration: const InputDecoration(
-                labelText: "Search songs...",
-                suffixIcon: Icon(Icons.search),
-              ),
-              onChanged: (val) {
-                filterQuery = val;
-                _searchSongs();
-              },
-            ),
-            const SizedBox(height: 20),
-
-            // 🧩 Category Filters
-            Wrap(
-              spacing: 8,
-              children: categories.map((cat) => ChoiceChip(
-                label: Text(cat),
-                selected: selectedCategory == cat,
-                onSelected: (selected) {
-                  setState(() => selectedCategory = selected ? cat : null);
+            // Search field (only when not viewing specific category)
+            if (widget.initialCategory == null) ...[
+              TextField(
+                decoration: InputDecoration(
+                  filled: true,
+                  fillColor: Colors.grey.shade900,
+                  hintText: "Search songs...",
+                  hintStyle: TextStyle(color: Colors.grey.shade500),
+                  prefixIcon: Icon(Icons.search, color: Colors.grey.shade500),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: BorderSide.none,
+                  ),
+                  contentPadding: const EdgeInsets.symmetric(vertical: 12),
+                ),
+                style: const TextStyle(color: Colors.white),
+                onChanged: (val) {
+                  filterQuery = val;
                   _searchSongs();
                 },
-              )).toList(),
-            ),
-            const SizedBox(height: 20),
+              ),
+              const SizedBox(height: 16),
+            ],
 
-            // 📋 Results
+            // Category filters (only when not viewing specific category)
+            if (widget.initialCategory == null && categories.isNotEmpty) ...[
+              _buildSectionTitle("Categories"),
+              _buildCategoryChips(),
+            ],
+
+            // Search results or category songs
             if (songs.isNotEmpty) ...[
-              const Text("Search Results", style: TextStyle(fontWeight: FontWeight.bold)),
-              const SizedBox(height: 10),
-              ...songs.map((s) => songTile(s as Map<String, dynamic>)),
+              _buildSectionTitle(
+                widget.initialCategory != null
+                    ? "All ${widget.initialCategory} Songs"
+                    : "Results",
+              ),
+              ListView.separated(
+                physics: const NeverScrollableScrollPhysics(),
+                shrinkWrap: true,
+                itemCount: songs.length,
+                separatorBuilder: (_, __) => const SizedBox(height: 8),
+                itemBuilder: (_, index) => _buildSongTile(
+                  songs[index] as Map<String, dynamic>,
+                ),
+              ),
             ],
 
-            const Divider(height: 40),
-
-            // 🎨 Artists
-            if (artists.isNotEmpty) ...[
-              const Text("Your Artists", style: TextStyle(fontWeight: FontWeight.bold)),
-              const SizedBox(height: 10),
-              Wrap(spacing: 10, children: artists.map((a) => Chip(label: Text(a))).toList()),
-              const SizedBox(height: 20),
+            // User's artists
+            if (artists.isNotEmpty && widget.initialCategory == null) ...[
+              _buildSectionTitle("Your Artists"),
+              _buildArtistChips(),
             ],
 
-            // 💿 Albums
-            if (albums.isNotEmpty) ...[
-              const Text("Your Albums", style: TextStyle(fontWeight: FontWeight.bold)),
-              const SizedBox(height: 10),
-              Wrap(spacing: 10, children: albums.map((a) => Chip(label: Text(a))).toList()),
-              const SizedBox(height: 20),
+            // User's albums
+            if (albums.isNotEmpty && widget.initialCategory == null) ...[
+              _buildSectionTitle("Your Albums"),
+              _buildAlbumChips(),
             ],
 
-            // 📁 Uploaded Songs
-            if (uploads.isNotEmpty) ...[
-              const Text("Your Uploads", style: TextStyle(fontWeight: FontWeight.bold)),
-              const SizedBox(height: 10),
-              ...uploads.map((s) => songTile(s as Map<String, dynamic>)),
+            // User's uploads
+            if (uploads.isNotEmpty && widget.initialCategory == null) ...[
+              _buildSectionTitle("Your Uploads"),
+              ListView.separated(
+                physics: const NeverScrollableScrollPhysics(),
+                shrinkWrap: true,
+                itemCount: uploads.length,
+                separatorBuilder: (_, __) => const SizedBox(height: 8),
+                itemBuilder: (_, index) => _buildSongTile(
+                  uploads[index] as Map<String, dynamic>,
+                ),
+              ),
             ],
           ],
         ),

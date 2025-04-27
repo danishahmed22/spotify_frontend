@@ -21,6 +21,7 @@ class _HomeScreenState extends State<HomeScreen> {
   Map<String, List<Map<String, dynamic>>> localPlaylists = {};
   String? userName;
   String? avatar;
+  Map<String, List<Map<String, dynamic>>> _cachedCategoryPlaylists = {};
 
   @override
   void initState() {
@@ -44,7 +45,10 @@ class _HomeScreenState extends State<HomeScreen> {
     final headers = {'Authorization': 'Bearer $token'};
 
     // Profile
-    final profileRes = await http.get(Uri.parse("http://localhost:8000/profile"), headers: headers);
+    final profileRes = await http.get(
+      Uri.parse("http://localhost:8000/profile"),
+      headers: headers,
+    );
     if (profileRes.statusCode == 200) {
       final data = json.decode(profileRes.body);
       setState(() {
@@ -54,7 +58,10 @@ class _HomeScreenState extends State<HomeScreen> {
     }
 
     // Songs
-    final songRes = await http.get(Uri.parse("http://localhost:8000/songs/search"), headers: headers);
+    final songRes = await http.get(
+      Uri.parse("http://localhost:8000/songs/search"),
+      headers: headers,
+    );
     if (songRes.statusCode == 200) {
       setState(() => songs = json.decode(songRes.body));
     }
@@ -63,6 +70,43 @@ class _HomeScreenState extends State<HomeScreen> {
     localPlaylists = await PlaylistManager.loadPlaylists();
 
     setState(() {});
+  }
+
+  Future<Map<String, List<Map<String, dynamic>>>> _loadCategoryPlaylists() async {
+    if (_cachedCategoryPlaylists.isNotEmpty) {
+      return _cachedCategoryPlaylists;
+    }
+
+    final prefs = await SharedPreferences.getInstance();
+    final token = prefs.getString('token');
+    final headers = {'Authorization': 'Bearer $token'};
+
+    // Get all categories
+    final catRes = await http.get(
+      Uri.parse("http://localhost:8000/songs/categories"),
+      headers: headers,
+    );
+
+    if (catRes.statusCode != 200) return {};
+
+    final categories = List<String>.from(json.decode(catRes.body));
+    final categoryPlaylists = <String, List<Map<String, dynamic>>>{};
+
+    // Load songs for each category in parallel
+    await Future.wait(categories.map((category) async {
+      final songRes = await http.get(
+        Uri.parse("http://localhost:8000/songs/search?category=$category"),
+        headers: headers,
+      );
+
+      if (songRes.statusCode == 200) {
+        final songs = List<Map<String, dynamic>>.from(json.decode(songRes.body));
+        categoryPlaylists[category] = songs;
+      }
+    }));
+
+    _cachedCategoryPlaylists = categoryPlaylists;
+    return categoryPlaylists;
   }
 
   Future<void> _showCreatePlaylistDialog() async {
@@ -78,7 +122,10 @@ class _HomeScreenState extends State<HomeScreen> {
             decoration: const InputDecoration(labelText: "Playlist Name"),
           ),
           actions: [
-            TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("Cancel")),
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text("Cancel"),
+            ),
             ElevatedButton(
               onPressed: () async {
                 final name = nameController.text.trim();
@@ -86,7 +133,8 @@ class _HomeScreenState extends State<HomeScreen> {
 
                 await PlaylistManager.create(name);
                 Navigator.pop(ctx);
-                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Playlist created")));
+                ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text("Playlist created")));
                 _loadHomeData();
               },
               child: const Text("Create"),
@@ -94,14 +142,6 @@ class _HomeScreenState extends State<HomeScreen> {
           ],
         );
       },
-    );
-  }
-
-  void _navigateToSearchScreen() {
-    // Navigate to search screen
-    Navigator.push(
-      context,
-      MaterialPageRoute(builder: (context) => SearchLibraryScreen()),
     );
   }
 
@@ -119,7 +159,8 @@ class _HomeScreenState extends State<HomeScreen> {
           children: [
             const Icon(Icons.music_note),
             const SizedBox(width: 10),
-            Expanded(child: Text(song['title'], style: const TextStyle(fontSize: 16))),
+            Expanded(
+                child: Text(song['title'], style: const TextStyle(fontSize: 16))),
             Text(song['artist'] ?? '', style: const TextStyle(color: Colors.white60)),
           ],
         ),
@@ -132,7 +173,8 @@ class _HomeScreenState extends State<HomeScreen> {
       onTap: () {
         Navigator.push(
           context,
-          MaterialPageRoute(builder: (_) => PlaylistDetailScreen(playlistName: name)),
+          MaterialPageRoute(
+              builder: (_) => PlaylistDetailScreen(playlistName: name)),
         );
       },
       child: Container(
@@ -142,44 +184,43 @@ class _HomeScreenState extends State<HomeScreen> {
           color: Colors.deepPurple.shade700,
           borderRadius: BorderRadius.circular(10),
         ),
-        child: Text(name, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+        child: Text(name,
+            style: const TextStyle(
+                fontSize: 16, fontWeight: FontWeight.bold)),
       ),
     );
   }
 
-  Widget viewMoreButton() {
-    return GestureDetector(
-      onTap: _navigateToSearchScreen,
-      child: Container(
-        margin: const EdgeInsets.symmetric(vertical: 10),
-        padding: const EdgeInsets.all(12),
-        decoration: BoxDecoration(
-          color: Colors.deepPurple.shade500,
-          borderRadius: BorderRadius.circular(10),
-        ),
-        child: const Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Text(
-                "View More",
-                style: TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.bold
-                )
-            ),
-            SizedBox(width: 5),
-            Icon(Icons.arrow_forward),
-          ],
-        ),
-      ),
+  Widget _buildCategoryPlaylistItem(
+      String category, List<Map<String, dynamic>> songs) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(category,
+            style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+        const SizedBox(height: 5),
+        ...songs.take(5).map((song) => songCard(song)),
+        if (songs.length > 5)
+          TextButton(
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => SearchLibraryScreen(initialCategory: category),
+                ),
+              );
+            },
+            child: const Text("View More →"),
+          ),
+        const SizedBox(height: 20),
+      ],
     );
   }
 
   @override
   Widget build(BuildContext context) {
-    final avatarUrl = avatar != null
-        ? "http://localhost:8000/static/avatars/$avatar"
-        : null;
+    final avatarUrl =
+    avatar != null ? "http://localhost:8000/static/avatars/$avatar" : null;
     return Scaffold(
       floatingActionButton: FloatingActionButton(
         onPressed: _showCreatePlaylistDialog,
@@ -196,22 +237,54 @@ class _HomeScreenState extends State<HomeScreen> {
                   children: [
                     Expanded(
                       child: Text('Hi, $userName 👋',
-                        style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
-                      ),
+                          style: const TextStyle(
+                              fontSize: 22, fontWeight: FontWeight.bold)),
                     ),
                     if (avatarUrl != null)
                       CircleAvatar(backgroundImage: NetworkImage(avatarUrl)),
                   ],
                 ),
-                const Text("Trending Songs", style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
-                const SizedBox(height: 10),
-                // Display only first 8 songs
-                ...songs.take(8).map((s) => songCard(s as Map<String, dynamic>)),
-                // Add "View More" button if there are more than 8 songs
-                if (songs.length > 8) viewMoreButton(),
+                const SizedBox(height: 20),
 
+                // Category Playlists Section
+                FutureBuilder(
+                  future: _loadCategoryPlaylists(),
+                  builder: (context, snapshot) {
+                    if (snapshot.connectionState == ConnectionState.waiting) {
+                      return const Center(child: CircularProgressIndicator());
+                    }
+
+                    final categoryPlaylists = snapshot.data ?? {};
+                    if (categoryPlaylists.isEmpty) {
+                      return const SizedBox();
+                    }
+
+                    return Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text("Category Playlists",
+                            style: TextStyle(
+                                fontSize: 20, fontWeight: FontWeight.bold)),
+                        const SizedBox(height: 10),
+                        ...categoryPlaylists.entries
+                            .map((e) => _buildCategoryPlaylistItem(e.key, e.value)),
+                      ],
+                    );
+                  },
+                ),
+
+                // Trending Songs Section
+                const Text("Trending Songs",
+                    style:
+                    TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+                const SizedBox(height: 10),
+                ...songs.take(8).map((s) => songCard(s as Map<String, dynamic>)),
+
+                // Your Playlists Section
                 const SizedBox(height: 30),
-                const Text("Your Playlists", style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+                const Text("Your Playlists",
+                    style:
+                    TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
                 const SizedBox(height: 10),
                 if (localPlaylists.isEmpty)
                   const Text("No playlists yet. Create one!"),
